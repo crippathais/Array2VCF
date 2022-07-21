@@ -1,0 +1,88 @@
+#######################################################
+# Filter array in VCF by Percentil per sample
+# wrrote by Thais Crippa de Oliveira
+# Last update: Oct.2021
+#######################################################
+
+
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+BiocManager::install("MatrixGenerics")
+BiocManager::install("VariantAnnotation")
+
+library(VariantAnnotation)
+library(MatrixGenerics)
+
+file <- "/home/thais/bipmed/chp/cc-chp/bipmed_m_sorted.vcf"
+
+# load only  GT e CONF from GENO column, to reduce the memory use
+#param <- ScanVcfParam(geno = c("GT", "CONF"))
+
+# Load entire VCF 
+vcf <- readVcf(file, genome = "hg19")
+# if want to use only some parameters
+# vcf <- readVcf(file, genome = "hg19", param = param)
+
+# Remove '_(GenomeWideSNP_6)' from samples' names
+colnames(vcf) <- sub("_\\(GenomeWideSNP_6\\)", "", colnames(vcf))
+
+sample_size<-ncol(geno(vcf)[["CONF"]])
+
+# Result output matrix 
+dt <- matrix(0, ncol = 7, nrow = sample_size)
+dt <- data.frame(dt)
+colnames(dt)<-c("Mean", "Median", "Perc_70", "Perc_80","Perc_90", "Perc_95", "Perc_99")
+rownames(dt)<-c(colnames(vcf)) #change for the name of samples in each dif. database
+
+# Filter by CONF
+for (x in 1:sample_size){
+  row_index<-geno(vcf)[["GT"]][,x] != "./."
+
+  dt[x,"Mean"]<-mean(geno(vcf)[["CONF"]][row_index,x], rm.NA=TRUE)
+  dt[x,"Median"]<-median(geno(vcf)[["CONF"]][row_index,x], rm.NA=TRUE)
+  dt[x,"Perc_70"]<-quantile(geno(vcf)[["CONF"]][row_index,x], c(.70), rm.NA=TRUE)
+  dt[x,"Perc_80"]<-quantile(geno(vcf)[["CONF"]][row_index,x], c(.80), rm.NA=TRUE)
+  dt[x,"Perc_90"]<-quantile(geno(vcf)[["CONF"]][row_index,x], c(.90), rm.NA=TRUE)
+  dt[x,"Perc_95"]<-quantile(geno(vcf)[["CONF"]][row_index,x], c(.95), rm.NA=TRUE)
+  dt[x,"Perc_99"]<-quantile(geno(vcf)[["CONF"]][row_index,x], c(.99), rm.NA=TRUE)
+}
+
+write.csv(dt, file="SummaryVCFPerSample.txt",quote = FALSE, sep="\t")
+
+#Report of missing calls at the original VCF
+rp <- matrix(0, ncol = 2, nrow = sample_size)
+rp <- data.frame(rp)
+colnames(rp)<-c("Miss_Original", "Miss_Perc")
+rownames(rp)<-c(colnames(vcf)) #change for the name of samples in each dif. database
+
+for (x in 1:sample_size){
+a<- as.data.frame(table(geno(vcf)[["GT"]][,x]))
+rp[x,1]<-a[1,2]
+}
+
+## -------------------CUT-OFF------------------------------------------------
+
+#After decided the cut-off based on percentile for all samples.
+for (x in 1:sample_size){
+  boo<-geno(vcf)[["CONF"]][,x] >= dt[x,"Perc_90"]
+  geno(vcf)[["GT"]][boo,x] <- "./."
+  }
+
+#Completing Report with modified vcf missing calls
+for (x in 1:sample_size){
+  a<- as.data.frame(table(geno(vcf)[["GT"]][,x]))
+  rp[x,2]<-a[1,2]
+}
+
+write.csv(rp, file="Report_missingPerSample.txt",quote = FALSE, sep="\t")
+
+# Modify FILTER column from "." to "PASS"
+fixed(vcf)[,4] <- "PASS"
+
+## -------------------Export NEW VCF--------------------------------------
+
+# exportar para VCF novamente
+output_file <- "bipmed_m_sorted_Perc.vcf"
+writeVcf(vcf, output_file)
+
+
+
